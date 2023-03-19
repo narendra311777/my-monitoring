@@ -1,0 +1,143 @@
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  labels:
+    app: prometheus
+  name: prometheus-config-records
+  namespace: monitoring
+data:
+  rules.yml: |
+    groups:
+    - name: alert.rules1
+      rules:
+      - alert: Node down
+        expr: up{job="node_exporter"} == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          title: Node {{ $labels.instance }} is down
+          description: Failed to scrape {{ $labels.job }} on {{ $labels.instance }} for more than 3 minutes. Node seems down.
+    - name: alert.rules
+      rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: "critical"
+        annotations:
+          summary: "Endpoint {{ $labels.instance }} down"
+          description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 1 minutes."
+    - name: Deployment
+      rules: 
+      - alert: Deployment at 0 Replicas 
+        annotations: 
+          summary: Deployment {{$labels.deployment}} is currently having no pods running 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNamespace: {{$labels.namespace}}\nDeployment name: {{$labels.deployment}}\n" 
+        expr: | 
+          sum(kube_deployment_status_replicas{pod_template_hash=""}) by (deployment,namespace)  < 1 
+        for: 1m 
+        labels: 
+          team: devops 
+      - alert: HPA Scaling Limited 
+        annotations: 
+          summary: HPA named {{$labels.hpa}} in {{$labels.namespace}} namespace has reached scaling limited state 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNamespace: {{$labels.namespace}}\nHPA name: {{$labels.hpa}}\n"  
+        expr: | 
+          (sum(kube_hpa_status_condition{condition="ScalingLimited",status="true"}) by (hpa,namespace)) == 1 
+        for: 1m 
+        labels:  
+          team: devops
+      - alert: HPA at MaxCapacity 
+        annotations: 
+          summary: HPA named {{$labels.hpa}} in {{$labels.namespace}} namespace is running at Max Capacity 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNamespace: {{$labels.namespace}}\nHPA name: {{$labels.hpa}}\n" 
+        expr: | 
+          ((sum(kube_hpa_spec_max_replicas) by (hpa,namespace)) - (sum(kube_hpa_status_current_replicas) by (hpa,namespace))) == 0 
+        for: 1m 
+        labels: 
+          team: devops
+    - name: Pods 
+      rules: 
+      - alert: Container restarted 
+        annotations: 
+          summary: Container named {{$labels.container}} in {{$labels.pod}} in {{$labels.namespace}} was restarted 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNamespace: {{$labels.namespace}}\nPod name: {{$labels.pod}}\nContainer name: {{$labels.container}}\n" 
+        expr: | 
+          sum(increase(kube_pod_container_status_restarts_total{namespace!="kube-system",pod_template_hash=""}[1m])) by (pod,namespace,container) > 0 
+        for: 0m 
+        labels: 
+          team: devops       
+      - alert: Too many Container restarts 
+        annotations: 
+          summary: Container named {{$labels.container}} in {{$labels.pod}} in {{$labels.namespace}} was restarted 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNamespace: {{$labels.namespace}}\nPod name: {{$labels.pod}}\nContainer name: {{$labels.container}}\n" 
+        expr: | 
+          sum(increase(kube_pod_container_status_restarts_total{namespace!="kube-system",pod_template_hash=""}[15m])) by (pod,namespace,container) > 5 
+        for: 0m 
+        labels: 
+          team: dev
+    - name: Nodes 
+      rules: 
+      - alert: High Node Memory Usage 
+        annotations: 
+          summary: Node {{$labels.kubernetes_io_hostname}} has more than 80% memory used. Plan Capacity 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNode: {{$labels.kubernetes_io_hostname}}\n" 
+        expr: | 
+          (sum (container_memory_working_set_bytes{id="/",container!="POD"}) by (kubernetes_io_hostname) / sum (machine_memory_bytes{}) by (kubernetes_io_hostname) * 100) > 80 
+        for: 5m 
+        labels: 
+          team: devops     
+          
+      - alert: High Node CPU Usage 
+        annotations: 
+          summary: Node {{$labels.kubernetes_io_hostname}} has more than 80% allocatable cpu used. Plan Capacity. 
+          description: "\nCluster Name: {{$externalLabels.cluster}}\nNode: {{$labels.kubernetes_io_hostname}}\n" 
+        expr: |
+          (sum(rate(container_cpu_usage_seconds_total{id="/", container!="POD"}[1m])) by (kubernetes_io_hostname) / sum(machine_cpu_cores) by (kubernetes_io_hostname)  * 100) > 80 
+        for: 5m 
+        labels: 
+          team: devops      
+    - name: CoreClusterServiceDisrupted
+      rules:
+      - alert: CoreClusterServiceDisrupted
+        expr: kube_pod_status_phase{phase=~"Pending|Unknown|Failed",namespace="kube-system",pod=~"kube-state-metrics.*|kube-dns-autoscaler.*|dns-controller.*|cluster-autoscaler.*|alb-ingress-controller.*"} > 0
+        for: 2m
+        labels:
+          severity: Critical
+        annotations:
+          summary: "Core Cluster Service has been disrupted.\n Please get in touch with Backend Team."
+          description: "Namespace: {{ $labels.namespace }} - Pod: {{ $labels.pod }} - Phase: {{ $labels.phase }}"
+      - alert: MemoryPressureOnNode
+        expr: kube_node_status_condition{condition="MemoryPressure",status="true"} > 0
+        for: 3m
+        labels:
+          severity: Critical
+        annotations:
+          summary: "There is Memory Pressure on node. Please check it out."
+          description: "Node: {{ $labels.node }}"
+      - alert: PIDPressureOnNode
+        expr: kube_node_status_condition{condition="PIDPressure",status="true"} > 0
+        for: 3m
+        labels:
+          severity: Critical
+        annotations:
+          summary: "There is Process overload on node. Please check it out."
+          description: "Node: {{ $labels.node }}"
+      - alert: NetworkUnavailableOnNode
+        expr: kube_node_status_condition{condition="NetworkUnavailable",status="true"} > 0
+        for: 3m
+        labels:
+          severity: Critical
+        annotations:
+          summary: "There are Network config issues on node. Please check it out."
+          description: "Node: {{ $labels.node }}"
+      - alert: NodeUnschedulable 
+        expr: kube_node_status_condition{condition="Ready",status="false"} > 0
+        for: 3m
+        labels:
+          severity: Critical
+        annotations:
+          summary: "The Node has Timed Out to attach to cluster and is Unschedulable. Please check it out."
+          description: "Node: {{ $labels.node }}"
